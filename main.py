@@ -1,8 +1,9 @@
-"""CLI entrypoint.
+"""CLI and Server entrypoint.
 
     python main.py --auth       one-time YouTube OAuth authorization
     python main.py --run        run one complete publish operation for a single Ayah (black screen)
     python main.py --run-surah  run one complete publish operation for a full Surah (with background image)
+    python main.py --server     run continuously as a local server daemon
 """
 
 import argparse
@@ -10,9 +11,12 @@ import os
 import sys
 import random
 import time
+import threading
+from contextlib import asynccontextmanager
 
 import schedule
 from dotenv import load_dotenv
+from fastapi import FastAPI
 
 import database
 import processor
@@ -149,7 +153,6 @@ def cmd_run_surah(cfg: dict) -> int:
     db = database.Database(cfg["database_path"])
 
     surah_id = None
-    # Use IDs in the 10000+ range for full surahs to avoid colliding with ayah IDs in DB
     for _ in range(50):
         candidate_id = random.randint(1, 114)
         db_id = 10000 + candidate_id
@@ -225,17 +228,13 @@ def _upload(cfg: dict, db: database.Database, item_id: int, video_path: str, aud
     return 0
 
 
-def cmd_server(cfg: dict) -> int:
-    print("Starting Quran Publisher Server...")
-    print("Schedule:")
-    print(" - 08:00 AM : 1 Full Surah Video (Long)")
-    print(" - 10:00 AM : 1 Ayah Video (Short)")
-    print(" - 16:00 PM : 1 Ayah Video (Short)")
-    print(" - 22:00 PM : 1 Ayah Video (Short)")
-    print(" - 04:00 AM : 1 Ayah Video (Short)")
-    
+# =======================================================
+# FASTAPI & DAEMON INTEGRATION
+# =======================================================
+
+def daemon_loop(cfg: dict):
+    print("Starting Quran Publisher Daemon Thread...")
     schedule.every().day.at("08:00").do(cmd_run_surah, cfg)
-    
     schedule.every().day.at("10:00").do(cmd_run, cfg)
     schedule.every().day.at("16:00").do(cmd_run, cfg)
     schedule.every().day.at("22:00").do(cmd_run, cfg)
@@ -245,26 +244,57 @@ def cmd_server(cfg: dict) -> int:
         try:
             schedule.run_pending()
             time.sleep(60)
-        except KeyboardInterrupt:
-            print("\nServer stopped by user.")
-            break
         except Exception as exc:
             print(f"Error in scheduled task: {exc}")
             time.sleep(60)
-            
+
+cfg = load_config()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the daemon loop in a background thread when the app starts
+    thread = threading.Thread(target=daemon_loop, args=(cfg,), daemon=True)
+    thread.start()
+    yield
+    # Background thread will be killed automatically because daemon=True
+
+# This object is detected by FastAPI Cloud and Uvicorn
+app = FastAPI(lifespan=lifespan)
+
+@app.get("/")
+def read_root():
+    return {"status": "Quran Publisher Server is running. The video daemon is active in the background!"}
+
+@app.get("/trigger/short")
+def trigger_short():
+    """Manual trigger to generate a short video immediately via API."""
+    threading.Thread(target=cmd_run, args=(cfg,), daemon=True).start()
+    return {"status": "Short video generation triggered in background."}
+
+@app.get("/trigger/long")
+def trigger_long():
+    """Manual trigger to generate a long video immediately via API."""
+    threading.Thread(target=cmd_run_surah, args=(cfg,), daemon=True).start()
+    return {"status": "Long video generation triggered in background."}
+
+
+def cmd_server(cfg: dict) -> int:
+    """Fallback local server command for those running manually without uvicorn."""
+    daemon_loop(cfg)
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Quran -> YouTube publisher")
+    # For CLI, we only parse if args are provided. Otherwise, if it's run via uvicorn/fastapi,
+    # sys.argv won't match our argparse. So we only run CLI if run directly as script.
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--auth", action="store_true", help="Run YouTube OAuth flow")
     group.add_argument("--run", action="store_true", help="Publish one Ayah video")
     group.add_argument("--run-surah", action="store_true", help="Publish one full Surah video")
-    group.add_argument("--server", action="store_true", help="Run continuously as a server daemon")
+    group.add_argument("--server", action="store_true", help="Run continuously as a local server daemon")
+    
     args = parser.parse_args()
-
-    cfg = load_config()
 
     if args.auth:
         return cmd_auth(cfg)
@@ -274,7 +304,6 @@ def main() -> int:
         return cmd_server(cfg)
     else:
         return cmd_run(cfg)
-
 
 if __name__ == "__main__":
     sys.exit(main())
