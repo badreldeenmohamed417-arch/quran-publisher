@@ -115,6 +115,8 @@ def create_black_video(audio_path: str, output_path: str) -> str:
         "-c:v", "libx264",
         "-tune", "stillimage",
         "-c:a", "aac",
+        "-b:a", "192k",
+        "-af", "atempo=1.03,aecho=0.8:0.88:60:0.4",
         "-shortest",
         output_path,
     ]
@@ -143,6 +145,7 @@ def create_image_video(audio_path: str, image_path: str, output_path: str) -> st
         "-tune", "stillimage",
         "-c:a", "aac",
         "-b:a", "192k",
+        "-af", "atempo=1.03,aecho=0.8:0.88:60:0.4",
         "-pix_fmt", "yuv420p",
         "-shortest",
         output_path,
