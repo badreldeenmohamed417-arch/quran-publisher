@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron?type=long",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron?type=short",
+      "schedule": "0 10,16,22,4 * * *"
+    }
+  ]
+}
