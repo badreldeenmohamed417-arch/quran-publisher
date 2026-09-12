@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 
 import schedule
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 import database
 import processor
@@ -38,6 +38,7 @@ def load_config() -> dict:
         "download_dir": os.getenv("DOWNLOAD_DIR", "downloads"),
         "database_path": os.getenv("DATABASE_PATH", "data/publisher.db"),
         "background_image_path": os.getenv("BACKGROUND_IMAGE_PATH", "assets/background.jpg"),
+        "api_key": os.getenv("API_KEY", "super_secret_key_123"),
     }
     return cfg
 
@@ -266,14 +267,18 @@ def read_root():
     return {"status": "Quran Publisher Server is running. The video daemon is active in the background!"}
 
 @app.get("/trigger/short")
-def trigger_short():
+def trigger_short(key: str = ""):
     """Manual trigger to generate a short video immediately via API."""
+    if key != cfg["api_key"]:
+        raise HTTPException(status_code=403, detail="Unauthorized: Invalid API Key")
     threading.Thread(target=cmd_run, args=(cfg,), daemon=True).start()
     return {"status": "Short video generation triggered in background."}
 
 @app.get("/trigger/long")
-def trigger_long():
+def trigger_long(key: str = ""):
     """Manual trigger to generate a long video immediately via API."""
+    if key != cfg["api_key"]:
+        raise HTTPException(status_code=403, detail="Unauthorized: Invalid API Key")
     threading.Thread(target=cmd_run_surah, args=(cfg,), daemon=True).start()
     return {"status": "Long video generation triggered in background."}
 
