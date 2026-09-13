@@ -60,7 +60,7 @@ def build_ayah_metadata(ayah_data: dict) -> dict:
     surah_arabic = surah.get("name", "قرآن")
     ayah_num = ayah_data.get("numberInSurah", 1)
     
-    title = f"Surah {surah_name} - Ayah {ayah_num} | Quran Recitation"
+    title = f"Surah {surah_name} - Ayah {ayah_num} | Quran #shorts"
     if len(title) > 100:
         title = title[:97] + "..."
         
@@ -70,10 +70,10 @@ def build_ayah_metadata(ayah_data: dict) -> dict:
         f"Surah {surah_name} ({surah_arabic}) - Ayah {ayah_num}\n\n"
         f"{text}\n\n"
         f"Reciter: Mishary Alafasy\n\n"
-        "Beautiful short Quran recitation to bring peace to your heart."
+        "Beautiful short Quran recitation to bring peace to your heart. #shorts"
     )
     
-    tags = ["quran", "islam", "recitation", "muslim", "allah", surah_name.lower()]
+    tags = ["quran", "islam", "recitation", "muslim", "allah", surah_name.lower(), "shorts"]
 
     return {"title": title, "description": description, "tags": tags[:15]}
 
@@ -235,11 +235,18 @@ def _upload(cfg: dict, db: database.Database, item_id: int, video_path: str, aud
 
 def daemon_loop(cfg: dict):
     print("Starting Quran Publisher Daemon Thread...")
-    schedule.every().day.at("08:00").do(cmd_run_surah, cfg)
-    schedule.every().day.at("10:00").do(cmd_run, cfg)
-    schedule.every().day.at("16:00").do(cmd_run, cfg)
-    schedule.every().day.at("22:00").do(cmd_run, cfg)
-    schedule.every().day.at("04:00").do(cmd_run, cfg)
+    
+    # 1 long video daily
+    schedule.every().day.at("12:00").do(cmd_run_surah, cfg)
+    
+    # 1 short video every 2 hours
+    short_times = [
+        "00:00", "02:00", "04:00", "06:00", 
+        "08:00", "10:00", "14:00", "16:00", 
+        "18:00", "20:00", "22:00"
+    ]
+    for t in short_times:
+        schedule.every().day.at(t).do(cmd_run, cfg)
     
     while True:
         try:

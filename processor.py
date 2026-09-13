@@ -110,7 +110,7 @@ def create_black_video(audio_path: str, output_path: str) -> str:
     cmd = [
         ffmpeg_exe, "-y",
         "-f", "lavfi",
-        "-i", "color=c=black:s=1920x1080",
+        "-i", "color=c=black:s=1080x1920",
         "-i", audio_path,
         "-c:v", "libx264",
         "-tune", "stillimage",
