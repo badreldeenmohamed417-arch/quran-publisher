@@ -1,12 +1,18 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/cron?type=long",
-      "schedule": "0 8 * * *"
+      "path": "/api/cron?type=short",
+      "schedule": "0 1,7,13,19 * * *"
     },
     {
-      "path": "/api/cron?type=short",
-      "schedule": "0 10,16,22,4 * * *"
+      "path": "/api/cron?type=long",
+      "schedule": "0 9 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/cron.py": {
+      "maxDuration": 300
+    }
+  }
 }
