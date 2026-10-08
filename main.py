@@ -8,12 +8,16 @@ import argparse
 import os
 import random
 import sys
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException
 
 import database
 import processor
 import youtube
+
+app = FastAPI(title="Quran Publisher")
 
 
 def load_config() -> dict:
@@ -202,6 +206,49 @@ def main() -> int:
     if args.run_surah:
         return cmd_run_surah(cfg)
     return cmd_run(cfg)
+
+
+def scheduled_ayah_id() -> int:
+    now = datetime.now(timezone.utc)
+    slot = now.hour // 6
+    return ((now.toordinal() * 4 + slot) % 6236) + 1
+
+
+def scheduled_surah_id() -> int:
+    now = datetime.now(timezone.utc)
+    return (now.toordinal() % 114) + 1
+
+
+@app.get("/")
+def health():
+    return {"status": "ok", "service": "quran-publisher"}
+
+
+@app.get("/api/cron")
+def run_cron(type: str = "short", authorization: str | None = Header(default=None)):
+    secret = os.getenv("CRON_SECRET", "")
+    if not secret or authorization != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    cfg = load_config()
+
+    try:
+        if type == "short":
+            result = cmd_run(cfg, scheduled_ayah_id())
+        elif type == "long":
+            result = cmd_run_surah(cfg, scheduled_surah_id())
+        else:
+            raise HTTPException(status_code=400, detail="invalid_type")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Cron job crashed: {exc}")
+        raise HTTPException(status_code=500, detail="failed") from exc
+
+    if result != 0:
+        raise HTTPException(status_code=500, detail="failed")
+
+    return {"status": "success", "type": type}
 
 
 if __name__ == "__main__":
