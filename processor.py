@@ -1,12 +1,11 @@
-"""Download, optional logo overlay, and cleanup helpers."""
+"""Download Quran audio and create Shorts/long-form videos with FFmpeg."""
 
 import os
-import random
 import shutil
 import subprocess
 
-import requests
 import imageio_ffmpeg
+import requests
 
 
 class DownloadError(Exception):
@@ -25,137 +24,112 @@ def safe_filename(base_id: int, suffix: str = ".mp4") -> str:
     return f"ayah_{base_id}{suffix}"
 
 
-
-
-
-def download_audio(dest_path: str, ayah_id: int, timeout: int = 30, max_retries: int = 3) -> tuple[str, dict]:
-    """Download a specific Quran Ayah audio from alquran.cloud with retries."""
+def download_audio(dest_path: str, ayah_id: int, timeout: int = 30, max_retries: int = 3):
     last_exc = None
-    for attempt in range(max_retries):
-        api_url = f"https://api.alquran.cloud/v1/ayah/{ayah_id}/ar.alafasy"
-        
+    for _ in range(max_retries):
         try:
-            resp = requests.get(api_url, timeout=timeout)
-            if resp.status_code != 200:
-                raise AudioError(f"HTTP {resp.status_code} while fetching audio API")
-            
-            data = resp.json()
-            ayah_data = data.get("data", {})
+            resp = requests.get(
+                f"https://api.alquran.cloud/v1/ayah/{ayah_id}/ar.alafasy",
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            ayah_data = resp.json().get("data", {})
             audio_url = ayah_data.get("audio")
             if not audio_url:
-                raise AudioError("No audio URL found in the API response")
+                raise AudioError("No audio URL found")
 
             with requests.get(audio_url, stream=True, timeout=timeout) as audio_resp:
-                if audio_resp.status_code != 200:
-                    raise AudioError(f"HTTP {audio_resp.status_code} while downloading audio")
-                
+                audio_resp.raise_for_status()
                 with open(dest_path, "wb") as f:
-                    for chunk in audio_resp.iter_content(chunk_size=1024 * 64):
+                    for chunk in audio_resp.iter_content(chunk_size=64 * 1024):
                         if chunk:
                             f.write(chunk)
-            
-            # Success
             return dest_path, ayah_data
-
         except Exception as exc:
             _remove(dest_path)
             last_exc = exc
-            
-    raise AudioError(f"Audio download failed after {max_retries} retries. Last error: {last_exc}")
+    raise AudioError(f"Audio download failed: {last_exc}")
 
 
-def download_surah_audio(dest_path: str, surah_id: int, timeout: int = 60, max_retries: int = 3) -> tuple[str, dict]:
-    """Download a full Surah audio from mp3quran and metadata from alquran.cloud."""
+def download_surah_audio(dest_path: str, surah_id: int, timeout: int = 60, max_retries: int = 3):
     last_exc = None
-    for attempt in range(max_retries):
-        meta_url = f"https://api.alquran.cloud/v1/surah/{surah_id}"
-        audio_url = f"https://server8.mp3quran.net/afs/{surah_id:03d}.mp3"
-        
+    for _ in range(max_retries):
         try:
-            resp = requests.get(meta_url, timeout=timeout)
-            if resp.status_code != 200:
-                raise AudioError(f"HTTP {resp.status_code} while fetching surah metadata")
-            
-            data = resp.json()
-            surah_data = data.get("data", {})
+            meta = requests.get(
+                f"https://api.alquran.cloud/v1/surah/{surah_id}", timeout=timeout
+            )
+            meta.raise_for_status()
+            surah_data = meta.json().get("data", {})
             if not surah_data:
-                raise AudioError("No surah data found in the API response")
+                raise AudioError("No Surah metadata found")
 
-            with requests.get(audio_url, stream=True, timeout=timeout) as audio_resp:
-                if audio_resp.status_code != 200:
-                    raise AudioError(f"HTTP {audio_resp.status_code} while downloading surah audio")
-                
+            with requests.get(
+                f"https://server8.mp3quran.net/afs/{surah_id:03d}.mp3",
+                stream=True,
+                timeout=timeout,
+            ) as audio_resp:
+                audio_resp.raise_for_status()
                 with open(dest_path, "wb") as f:
-                    for chunk in audio_resp.iter_content(chunk_size=1024 * 128):
+                    for chunk in audio_resp.iter_content(chunk_size=128 * 1024):
                         if chunk:
                             f.write(chunk)
-            
             return dest_path, surah_data
-
         except Exception as exc:
             _remove(dest_path)
             last_exc = exc
-            
-    raise AudioError(f"Surah audio download failed after {max_retries} retries. Last error: {last_exc}")
+    raise AudioError(f"Surah audio download failed: {last_exc}")
 
 
-def create_black_video(audio_path: str, output_path: str) -> str:
-    """Generate a black screen video matching the exact duration of the audio."""
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    if not ffmpeg_exe:
-        ffmpeg_exe = shutil.which("ffmpeg")
-    if not ffmpeg_exe:
-        raise AudioError("ffmpeg was not found on PATH or via imageio_ffmpeg.")
-        
-    cmd = [
-        ffmpeg_exe, "-y",
-        "-f", "lavfi",
-        "-i", "color=c=black:s=1080x1920",
-        "-i", audio_path,
-        "-c:v", "libx264",
-        "-tune", "stillimage",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-af", "atempo=1.03,aecho=0.8:0.88:60:0.4",
-        "-shortest",
-        output_path,
-    ]
-    
+def _ffmpeg() -> str:
+    exe = imageio_ffmpeg.get_ffmpeg_exe() or shutil.which("ffmpeg")
+    if not exe:
+        raise AudioError("ffmpeg was not found")
+    return exe
+
+
+def _run(cmd: list[str]) -> None:
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise AudioError(f"ffmpeg video generation failed: {result.stderr[-500:]}")
-        
+    if result.returncode:
+        raise AudioError(f"ffmpeg failed: {result.stderr[-1000:]}")
+
+
+def create_short_video(audio_path: str, output_path: str) -> str:
+    """1080x1920, 30fps, vertical video suitable for YouTube Shorts."""
+    _run([
+        _ffmpeg(), "-y",
+        "-f", "lavfi", "-i", "color=c=black:s=1080x1920:r=30",
+        "-i", audio_path,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-shortest", "-movflags", "+faststart", output_path,
+    ])
     return output_path
 
 
-def create_image_video(audio_path: str, image_path: str, output_path: str) -> str:
-    """Generate a video with a static image matching the exact duration of the audio."""
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    if not ffmpeg_exe:
-        ffmpeg_exe = shutil.which("ffmpeg")
-    if not ffmpeg_exe:
-        raise AudioError("ffmpeg was not found on PATH or via imageio_ffmpeg.")
-        
-    cmd = [
-        ffmpeg_exe, "-y",
-        "-loop", "1",
-        "-i", image_path,
-        "-i", audio_path,
-        "-c:v", "libx264",
-        "-tune", "stillimage",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-af", "atempo=1.03,aecho=0.8:0.88:60:0.4",
-        "-pix_fmt", "yuv420p",
-        "-shortest",
-        output_path,
-    ]
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise AudioError(f"ffmpeg image video generation failed: {result.stderr[-500:]}")
-        
+def create_long_video(audio_path: str, image_path: str | None, output_path: str) -> str:
+    """1920x1080, 16:9, with a fitted image or a generated black background."""
+    ffmpeg = _ffmpeg()
+    if image_path:
+        inputs = ["-loop", "1", "-i", image_path]
+        vf = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
+    else:
+        inputs = ["-f", "lavfi", "-i", "color=c=black:s=1920x1080:r=30"]
+        vf = "null"
+
+    _run([
+        ffmpeg, "-y", *inputs, "-i", audio_path,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-shortest", "-movflags", "+faststart", output_path,
+    ])
     return output_path
+
+
+create_black_video = create_short_video
+create_image_video = create_long_video
 
 
 def cleanup(*paths: str) -> None:
