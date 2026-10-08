@@ -61,19 +61,33 @@ def run_oauth_flow(client_secrets_file: str, token_file: str) -> None:
 
 def get_authenticated_service(token_file: str):
     """Headless load of a previously saved token, refreshing if needed."""
-    if not os.path.exists(token_file):
-        raise YouTubeAuthError(
-            f"No saved YouTube token at {token_file}. "
-            "Run: python main.py --auth"
-        )
-
-    creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+    token_json = os.getenv("YOUTUBE_TOKEN_JSON")
+    if token_json:
+        import json
+        try:
+            creds = Credentials.from_authorized_user_info(
+                json.loads(token_json), SCOPES
+            )
+        except Exception as exc:
+            raise YouTubeAuthError(f"Invalid YOUTUBE_TOKEN_JSON: {exc}") from exc
+    else:
+        if not os.path.exists(token_file):
+            raise YouTubeAuthError(
+                f"No saved YouTube token at {token_file}. "
+                "Run python main.py --auth locally, then store the resulting "
+                "JSON in the Vercel YOUTUBE_TOKEN_JSON environment variable."
+            )
+        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            with open(token_file, "w") as f:
-                f.write(creds.to_json())
+            try:
+                os.makedirs(os.path.dirname(token_file) or ".", exist_ok=True)
+                with open(token_file, "w") as f:
+                    f.write(creds.to_json())
+            except OSError:
+                pass
         else:
             raise YouTubeAuthError(
                 "Saved YouTube token is invalid and cannot be refreshed. "
